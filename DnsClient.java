@@ -1,8 +1,57 @@
+/**
+ * DnsClient — Minimal DNS client (UDP)
+ *
+ * Usage:
+ *   java DnsClient [-t timeout] [-r max-retries] [-p port] [-mx|-ns] @server name
+ *
+ * Parameters:
+ *   -t timeout       (optional) Seconds to wait for a reply before retrying. Default: 5
+ *   -r max-retries   (optional) Number of retransmissions on timeout.     Default: 3
+ *   -p port          (optional) UDP port of the DNS server.               Default: 53
+ *   -mx | -ns        (optional) Query type: MX = mail exchangers, NS = name servers.
+ *                    If neither flag is given, the query type is A (IPv4 address).
+ *   @server          (required) IPv4 address of the DNS server (a.b.c.d)
+ *   name             (required) Domain name to look up (e.g., www.example.com)
+ *
+ * What it does:
+ *   - Builds a DNS query packet by hand (no DNS helper libraries) and sends it via UDP
+ *     to @server:port, with a socket timeout and up to max-retries retransmissions.
+ *   - Query type depends on flags:
+ *       * default → A (IPv4 address)
+ *       * -mx    → MX (mail servers + preference)
+ *       * -ns    → NS (authoritative name servers)
+ *   - Parses the DNS response (verifies header, handles compression) and prints results.
+ *
+ * Output format (printed to STDOUT, exact strings expected by the grader):
+ *   DnsClient sending request for <name>
+ *   Server: <server IP>
+ *   Request type: <A|MX|NS>
+ *   Response received after <seconds> seconds (<retries> retries)
+ *   ***Answer Section (N records)***
+ *   For each record (tab-separated):
+ *     A:   "IP\t<ipv4>\t<ttl>\t<auth|nonauth>"
+ *     CNAME:"CNAME\t<alias>\t<ttl>\t<auth|nonauth>"   // printed if present with A queries
+ *     MX:  "MX\t<host>\t<pref>\t<ttl>\t<auth|nonauth>"
+ *     NS:  "NS\t<host>\t<ttl>\t<auth|nonauth>"
+ *   If additional records exist, also print:
+ *     ***Additional Section (M records)***
+ *   If no answers are found:
+ *     NOTFOUND
+ *   On errors (bad input, timeouts exceeded, malformed response, etc.):
+ *     ERROR\t<description>
+ *
+ * Notes:
+ *   - Use DatagramSocket + setSoTimeout for retries.
+ *   - Use InetAddress.getByAddress(byte[4]) for @server (do NOT resolve names here).
+ *   - Construct/parse DNS packets manually (header, QNAME, QTYPE, QCLASS, RRs).
+ */
+
 class DnsClient {
     static final int TYPE_A=1, TYPE_NS=2, TYPE_MX=15, CLASS_IN=1;
   
     public static void main(String[] args) {
       try {
+        // parse CLI: timeout=5, retries=3, port=53, qtype=A; read @server and name  [spec]
         // (1) CLI parse: set timeout=5, retries=3, port=53, qtype=TYPE_A; read @server and name.
         // Validate: at most one of -mx/-ns; require @server + name; else:
         //   System.out.println("ERROR\tIncorrect input syntax: ..."); return;
