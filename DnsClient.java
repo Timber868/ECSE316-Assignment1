@@ -64,7 +64,7 @@ class DnsClient {
         int timeoutSec = 5;
         int maxRetries = 3;
         int port = 53;
-        int qtype = 1; // 1=A, 2=NS, 15=MX
+        int qtype = 1; // default is A which has a value of 1
         String server = null;
         String name = null;
     }
@@ -73,19 +73,33 @@ class DnsClient {
         try {
             // (1) CLI parse with our helper function
             Config config = parseInput(args);
+			
+            // If config is null, there was an error in parsing input, so we exit.
+            if (config == null) return;
 
-            System.out.println("Config:");
-            System.out.println("Timeout: " + config.timeoutSec);
-            System.out.println("Max Retries: " + config.maxRetries);
-            System.out.println("Port: " + config.port);
-            System.out.println("Query Type: " + config.qtype);
-            System.out.println("Server: " + config.server);
-            System.out.println("Name: " + config.name);
+            // (2) Create the UDP socket we will use to send/receive DNS packets
+            DatagramSocket socket = new DatagramSocket();
+            socket.setSoTimeout(config.timeoutSec * 1000);
 
-            // (2) Socket + dst:
-            // DatagramSocket sock = new DatagramSocket();
-            // sock.setSoTimeout(timeoutSec*1000);
-            // byte[] ipBytes = parse a.b.c.d → 4 bytes; InetAddress.getByAddress(ipBytes);
+            // Convert the server "a.b.c.d" into 4 raw bytes for InetAddress
+            String[] octets = config.server.split("\\.");
+            byte[] IP = new byte[] {
+                (byte) Integer.parseInt(octets[0]),
+                (byte) Integer.parseInt(octets[1]),
+                (byte) Integer.parseInt(octets[2]),
+                (byte) Integer.parseInt(octets[3])
+            };
+
+            // Build destination InetAddress from the raw bytes this is the only thing allowed
+            InetAddress dnsServer = InetAddress.getByAddress(IP);
+            int dnsPort = config.port;
+
+            // Prepare re-usable receive buffer  big enough for typical DNS replies
+            byte[] recvBuf = new byte[2048]; 
+                         
+            // Prepare the receive packet with the current receive buffer
+            DatagramPacket receivePack = new DatagramPacket(recvBuf, recvBuf.length);
+            
 
             // (3) Build query:
             // ByteBuffer bb(BIG_ENDIAN);
