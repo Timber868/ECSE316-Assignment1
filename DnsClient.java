@@ -73,6 +73,7 @@ class DnsClient {
         try {
             // (1) CLI parse with our helper function
             Config config = parseInput(args);
+//            System.out.println(config);
 			
             // If config is null, there was an error in parsing input, so we exit.
             if (config == null) return;
@@ -115,6 +116,58 @@ class DnsClient {
             // "Maximum number of retries X exceeded"; return; } }
             // }
             // double elapsed=(System.nanoTime()-t0)/1e9;
+            long startTime = System.nanoTime();
+            int tries = 0;
+            byte[] response = null;
+
+            while (tries <= config.maxRetries) {
+                try {
+                    // --- Send DNS query packet ---
+                    DatagramPacket sendPack =
+                            new DatagramPacket(query, query.length, dnsServer, dnsPort);
+                    socket.send(sendPack);
+
+                    // --- Wait for response ---
+                    socket.receive(receivePack);
+
+                    // --- Success: copy only the valid bytes ---
+                    response = new byte[receivePack.getLength()];
+                    System.arraycopy(receivePack.getData(), 0, response, 0, receivePack.getLength());
+                    break; // exit retry loop once response received
+
+                } catch (SocketTimeoutException e) {
+                    tries++;
+                    // If we’ve already retried max times, report error and exit
+                    if (tries > config.maxRetries) {
+                        System.out.println(
+                                "ERROR\tMaximum number of retries " + config.maxRetries + " exceeded");
+                        socket.close();
+                        return;
+                    }
+                    // Otherwise, automatically retry (loop continues)
+                } catch (IOException e) {
+                    // Any unexpected IO problem during send/receive
+                    System.out.println("ERROR\tI/O exception during send/receive: " + e.getMessage());
+                    socket.close();
+                    return;
+                }
+            }
+
+// --- If we reach here, a response was received ---
+            double elapsedSeconds = (System.nanoTime() - startTime) / 1e9;
+
+// (preliminary step 6) Temporary success output (minimal required for tests)
+            System.out.println("DnsClient sending request for " + config.name);
+            System.out.println("Server: " + config.server);
+            String typeStr = (config.qtype == 1 ? "A" : config.qtype == 2 ? "NS" : "MX");
+            System.out.println("Request type: " + typeStr);
+            System.out.printf("Response received after %.3f seconds (%d retries)%n",
+                    elapsedSeconds, tries);
+
+// Close the socket to release the port
+            socket.close();
+
+
 
             // (5) Parse response:
             // ByteBuffer r=wrap(resp).order(BIG_ENDIAN);
