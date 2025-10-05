@@ -232,7 +232,8 @@ public class DnsClientIntegrationTests {
     @Test
     public void output_cannot_crash_on_short_or_malformed_responses() throws Exception {
         // supply intentionally broken server address -> should print ERROR not crash
-        String out = runClient("@255.255.255.255", "example.com").out;
+        String out = runClient( "@255.255.255.255", "example.com").out;
+        System.out.println(out);
         assertTrue(out.contains("ERROR"));
     }
 }

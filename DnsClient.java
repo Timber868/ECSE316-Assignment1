@@ -116,37 +116,49 @@ class DnsClient {
             // "Maximum number of retries X exceeded"; return; } }
             // }
             // double elapsed=(System.nanoTime()-t0)/1e9;
+            // (4) Retry loop:
             long startTime = System.nanoTime();
             int tries = 0;
             byte[] response = null;
 
+// label to break out once we have a valid reply from the intended server
+            outer:
             while (tries <= config.maxRetries) {
                 try {
-                    // --- Send DNS query packet ---
+                    // send once per try
                     DatagramPacket sendPack =
                             new DatagramPacket(query, query.length, dnsServer, dnsPort);
                     socket.send(sendPack);
 
-                    // --- Wait for response ---
-                    socket.receive(receivePack);
+                    while (true) {
+                        // reset the receive packet buffer/length every wait
+                        receivePack.setData(recvBuf);
+                        receivePack.setLength(recvBuf.length);
 
-                    // --- Success: copy only the valid bytes ---
-                    response = new byte[receivePack.getLength()];
-                    System.arraycopy(receivePack.getData(), 0, response, 0, receivePack.getLength());
-                    break; // exit retry loop once response received
+                        socket.receive(receivePack);
+
+                        // *** new: only accept a reply from the server and port we queried ***
+                        if (!receivePack.getAddress().equals(dnsServer)
+                                || receivePack.getPort() != dnsPort) {
+                            // Ignore stray/broadcast responses; keep listening until timeout.
+                            continue;
+                        }
+
+                        // Valid source => copy payload and break out
+                        response = java.util.Arrays.copyOfRange(
+                                receivePack.getData(), 0, receivePack.getLength());
+                        break outer;
+                    }
 
                 } catch (SocketTimeoutException e) {
                     tries++;
-                    // If we’ve already retried max times, report error and exit
                     if (tries > config.maxRetries) {
-                        System.out.println(
-                                "ERROR\tMaximum number of retries " + config.maxRetries + " exceeded");
+                        System.out.println("ERROR\tMaximum number of retries " + config.maxRetries + " exceeded");
                         socket.close();
                         return;
                     }
-                    // Otherwise, automatically retry (loop continues)
+                    // else retry automatically
                 } catch (IOException e) {
-                    // Any unexpected IO problem during send/receive
                     System.out.println("ERROR\tI/O exception during send/receive: " + e.getMessage());
                     socket.close();
                     return;
