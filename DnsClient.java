@@ -102,12 +102,10 @@ class DnsClient {
             
 
             // (3) Build query:
-            // ByteBuffer bb(BIG_ENDIAN);
-            // putShort(ID=random); putShort(flags with RD=1); putShort(1); putShort(0);
-            // putShort(0); putShort(0);
-            // write QNAME: for each label of name, len byte + ASCII bytes; then 0x00
-            // putShort(qtype); putShort(CLASS_IN);
-            // byte[] query = Arrays.copyOf(bb.array(), bb.position());
+
+            // First 2 bytes of the DNS header are the ID field we want to keep track of it so we can verify the response matches
+            Short ID = (short) (Math.random() * 0xFFFF);
+            byte[] query = queryMaker(config, ID);
 
             // (4) Retry loop:
             // long t0=System.nanoTime(); int tries=0; byte[] resp=null;
@@ -247,4 +245,89 @@ class DnsClient {
         // Return the config object
         return config;
     }    
+
+    static byte[] queryMaker(DnsClient.Config config, Short ID) {
+        try {
+            // First we need to build the DNS query packet manually
+            // The DNS packet consists of a header and a question section
+            // We will use a ByteArrayOutputStream to build the packet dynamically
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+
+            // Write the header and question section to the DataOutputStream
+            // Flags are a bitfield so we need to set each bit individually then combine them 
+            Byte QR = 0; // 0 is for query 1 is for response
+            Byte OPCODE = 0; // standard query
+            Byte AA = 0; // Authoritative Answer
+            Byte TC = 0; // Truncation
+            Byte RD = 1; // Recursion Desired
+            Byte RA = 0; // Recursion Available
+            Byte Z = 0; // 3 bit set reserved for future use
+            Byte RCODE = 0; // Response code but were a querry so not useful 0 means no error anyways
+            Short FLAGS = (short) ((QR << 15) | (OPCODE << 11) | (AA << 10) | (TC << 9) | (RD << 8)
+                    | (RA << 7) | (Z << 4) | RCODE);
+
+            // Next we have the counts section of the header each count is a 16 bit unsigned int
+            Short QDCOUNT = 1; // we have one question it could be an unsigned 16-bit int but we only have one question
+            Short ANCOUNT = 0; // we have no answers in the query
+            Short NSCOUNT = 0; // we have no authority records in the query
+            Short ARCOUNT = 0; // we have no additional records in the query
+
+            // Now we write the header to the DataOutputStream
+            dos.writeShort(ID);
+            dos.writeShort(FLAGS);
+            dos.writeShort(QDCOUNT);
+            dos.writeShort(ANCOUNT);
+            dos.writeShort(NSCOUNT);
+            dos.writeShort(ARCOUNT);
+
+            // Now we write the question section to the DataOutputStream
+            // The question section consists of the QNAME, QTYPE, and QCLASS
+
+            // QNAME is the domain name we are querying for it is represented as a series of labels
+            // is a domain name represented by a sequence of labels, where each label begins with a length
+            // octet followed by that number of octets. The domain name terminates with the zero-length octet,
+            // representing the null label of the root.
+
+            int totalNameLen = 1; // start at 1 for the final 0x00 terminator
+            for (String label : config.name.split("\\.")) {
+                byte length = (byte) label.length();
+
+                // per DNS rules: each label length 1..63
+                if (length == 0 || length > 63) {
+                    System.out.println("ERROR\tIncorrect input syntax: invalid label length in name");
+                    return null;
+                } 
+
+                totalNameLen += length + 1; // +1 for the length byte
+                if (totalNameLen > 255) {
+                    System.out.println("ERROR\tIncorrect input syntax: name too long");
+                    return null;
+                }
+
+                dos.writeByte(length);
+                dos.writeBytes(label);
+            }
+            dos.writeByte(0); // null label of the root
+
+            // QTYPE is a 16-bit code specifying the type of query.
+            // Note: The three types relevant to this lab are:
+            // 0x0001 for a type-A query (host address)
+            // 0x0002 for a type-NS query (name server)
+            // 0x000f for a type-MX query (mail server)
+
+            dos.writeShort((short) config.qtype); // QTYPE
+
+            // QCLASS is a 16-bit code specifying the class of the query. You should always use 0x0001 in this field, representing an Internet address.
+            dos.writeShort((short) 0x0001); // QCLASS
+
+            // Finally we convert the ByteArrayOutputStream to a byte array to get the final query packet
+            byte[] query = baos.toByteArray();
+            return query;
+        }
+        catch (IOException e) {
+            System.out.println("ERROR\tIOException while building query: " + e.getMessage());
+            return null;
+        }
+    }
 }
