@@ -374,22 +374,23 @@ class DnsClient {
             // octet followed by that number of octets. The domain name terminates with the zero-length octet,
             // representing the null label of the root.
 
-            int totalNameLen = 1; // start at 1 for the final 0x00 terminator
+            int totalNameLen = 1; // final null terminator
             for (String label : config.name.split("\\.")) {
                 byte length = (byte) label.length();
 
-                // per DNS rules: each label length 1..63
+                // Check each label
                 if (length == 0 || length > 63) {
                     System.out.println("ERROR\tIncorrect input syntax: invalid label length in name");
                     return null;
-                } 
+                }
 
-                totalNameLen += length + 1; // +1 for the length byte
-                if (totalNameLen > 255) {
+                // Check total length BEFORE writing
+                if (totalNameLen + length + 1 > 255) {
                     System.out.println("ERROR\tIncorrect input syntax: name too long");
                     return null;
                 }
 
+                totalNameLen += length + 1;
                 dos.writeByte(length);
                 dos.writeBytes(label);
             }
@@ -656,10 +657,12 @@ class DnsClient {
         r.answerCount = r.answers.size();
         r.additionalCount = r.additionals.size();
         r.ok = true;
-        if (r.answerCount == 0 && !r.notFound) {
-            // Some servers reply with no answers but rcode=0; spec wants NOTFOUND in this lab when nothing in Answers.
+
+// Only mark NOTFOUND if RCODE == 0 (no error)
+        if (rcode == 0 && r.answerCount == 0 && !r.notFound) {
             r.notFound = true;
         }
         return r;
+
     }
 }
