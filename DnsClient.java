@@ -143,7 +143,7 @@ class DnsClient {
         }
     }
 
-    private static DnsClient.Config parseInput(String[] args) {
+    static DnsClient.Config parseInput(String[] args) {
         // make a helper function that will parse the input arguments
         DnsClient.Config config = new DnsClient.Config();
         boolean seenMx = false, seenNs = false; // track mutual exclusivity
