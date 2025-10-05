@@ -156,6 +156,8 @@ class DnsClient {
 // --- If we reach here, a response was received ---
             double elapsedSeconds = (System.nanoTime() - startTime) / 1e9;
 
+            ParsedResult parsed = parseResponse(response, ID);
+
 // (preliminary step 6) Temporary success output (minimal required for tests)
             System.out.println("DnsClient sending request for " + config.name);
             System.out.println("Server: " + config.server);
@@ -164,7 +166,25 @@ class DnsClient {
             System.out.printf("Response received after %.3f seconds (%d retries)%n",
                     elapsedSeconds, tries);
 
-// Close the socket to release the port
+            if (!parsed.ok) {
+                System.out.println("ERROR\t" + (parsed.error == null ? "Unknown parsing error" : parsed.error));
+                socket.close();
+                return;
+            }
+            if (parsed.notFound) {
+                System.out.println("NOTFOUND");
+                socket.close();
+                return;
+            }
+
+            System.out.println("***Answer Section (" + parsed.answerCount + " records)***");
+            for (String line : parsed.answers) System.out.println(line);
+
+            if (parsed.additionalCount > 0) {
+                System.out.println("***Additional Section (" + parsed.additionalCount + " records)***");
+                for (String line : parsed.additionals) System.out.println(line);
+            }
+
             socket.close();
 
 
@@ -382,5 +402,252 @@ class DnsClient {
             System.out.println("ERROR\tIOException while building query: " + e.getMessage());
             return null;
         }
+    }
+
+    static final class ParsedResult {
+        boolean ok;
+        boolean notFound;
+        String error;           // if non-null: print "ERROR\t" + error
+        boolean authoritative;  // AA flag from header
+        int answerCount;
+        int additionalCount;
+        java.util.List<String> answers = new java.util.ArrayList<>();
+        java.util.List<String> additionals = new java.util.ArrayList<>();
+    }
+
+    // Unsigned 16/32-bit reads (big-endian)
+    static int u16(byte[] b, int off) {
+        return ((b[off] & 0xFF) << 8) | (b[off + 1] & 0xFF);
+    }
+    static long u32(byte[] b, int off) {
+        return ((long)(b[off] & 0xFF) << 24) |
+                ((long)(b[off+1] & 0xFF) << 16) |
+                ((long)(b[off+2] & 0xFF) << 8) |
+                ((long)(b[off+3] & 0xFF));
+    }
+
+    // Decode domain name at 'offset' with DNS compression (RFC 1035).
+// Returns name and the next offset to continue parsing (for non-jump path).
+    static final class NameDec {
+        final String name;
+        final int next;
+        NameDec(String name, int next) { this.name = name; this.next = next; }
+    }
+    static NameDec decodeName(byte[] msg, int offset) {
+        StringBuilder sb = new StringBuilder();
+        int pos = offset;
+        int next = -1;
+        boolean jumped = false;
+        int safety = 0;
+
+        while (true) {
+            if (safety++ > 512) throw new IllegalArgumentException("Name compression loop");
+            int len = msg[pos] & 0xFF;
+
+            // End of name
+            if (len == 0) {
+                if (!jumped) next = pos + 1;
+                break;
+            }
+
+            // Pointer 11xxxxxx xxxxxxxx
+            if ((len & 0xC0) == 0xC0) {
+                int ptr = ((len & 0x3F) << 8) | (msg[pos + 1] & 0xFF);
+                if (!jumped) next = pos + 2;
+                pos = ptr;
+                jumped = true;
+                continue;
+            }
+
+            // Label
+            pos++;
+            if (sb.length() > 0) sb.append('.');
+            if (len > 63) throw new IllegalArgumentException("Label length > 63");
+            for (int i = 0; i < len; i++) {
+                sb.append((char)(msg[pos + i] & 0xFF));
+            }
+            pos += len;
+        }
+
+        return new NameDec(sb.toString(), next);
+    }
+
+    static String ipv4(byte[] b, int off) {
+        return (b[off] & 0xFF) + "." + (b[off+1] & 0xFF) + "." + (b[off+2] & 0xFF) + "." + (b[off+3] & 0xFF);
+    }
+
+    // Parse a single RR starting at offset; return "line" for output and new offset
+    static final class RRParse {
+        final String line;  // already formatted per type (without section headers)
+        final int next;
+        RRParse(String line, int next) { this.line = line; this.next = next; }
+    }
+
+    static RRParse parseRR(byte[] resp, int off, boolean aaFlag) {
+        // NAME
+        NameDec name = decodeName(resp, off);
+        int p = name.next;
+
+        int type = u16(resp, p); p += 2;
+        int clazz = u16(resp, p); p += 2; // expect IN=1
+        long ttl = u32(resp, p); p += 4;
+        int rdlen = u16(resp, p); p += 2;
+
+        String auth = aaFlag ? "auth" : "nonauth";
+
+        String out = null;
+        switch (type) {
+            case 1: // A
+                if (rdlen == 4) {
+                    String ip = ipv4(resp, p);
+                    out = "IP\t" + ip + "\t" + ttl + "\t" + auth;
+                }
+                break;
+
+            case 2: // NS
+            {
+                NameDec ns = decodeName(resp, p);
+                out = "NS\t" + ns.name + "\t" + ttl + "\t" + auth;
+                // for NS/CNAME the RDATA is a (possibly compressed) domain name; we must not rely on rdlen to skip, use decoder’s own traversal
+                // BUT we still need to advance p by rdlen at the end, not by decoder.next (decoder reads from p via pointer jumps)
+            }
+            break;
+
+            case 5: // CNAME
+            {
+                NameDec cn = decodeName(resp, p);
+                out = "CNAME\t" + cn.name + "\t" + ttl + "\t" + auth;
+            }
+            break;
+
+            case 15: // MX
+            {
+                int pref = u16(resp, p);
+                NameDec mx = decodeName(resp, p + 2);
+                out = "MX\t" + mx.name + "\t" + pref + "\t" + ttl + "\t" + auth;
+            }
+            break;
+
+            // You can add AAAA/TXT as needed; spec requires A/NS/MX (+ CNAME if present)
+            default:
+                // Ignore unknown types for printing, but still advance offset
+                break;
+        }
+
+        // Advance by RDLENGTH from the start of RDATA
+        p = p + rdlen;
+        return new RRParse(out, p);
+    }
+
+    static ParsedResult parseResponse(byte[] resp, short expectedId) {
+        ParsedResult r = new ParsedResult();
+
+        if (resp == null || resp.length < 12) {
+            r.error = "Malformed response (too short)";
+            return r;
+        }
+        int id = u16(resp, 0);
+        int flags = u16(resp, 2);
+        int qd = u16(resp, 4);
+        int an = u16(resp, 6);
+        int ns = u16(resp, 8);
+        int ar = u16(resp, 10);
+
+        if ((id & 0xFFFF) != (expectedId & 0xFFFF)) {
+            r.error = "Unexpected response (ID mismatch)";
+            return r;
+        }
+
+        int qr = (flags >> 15) & 1;
+        int aa = (flags >> 10) & 1;
+        int tc = (flags >> 9) & 1;
+        int rcode = (flags) & 0xF;
+
+        if (qr != 1) {
+            r.error = "Unexpected response (QR=0)";
+            return r;
+        }
+        if (tc == 1) {
+            r.error = "Truncated response (TC=1)";
+            return r;
+        }
+        if (rcode == 3) { // NXDOMAIN
+            r.notFound = true;
+            r.authoritative = (aa == 1);
+            r.answerCount = 0;
+            r.additionalCount = 0;
+            r.ok = true;
+            return r;
+        }
+        if (rcode != 0) {
+            r.error = "Server returned error RCODE=" + rcode;
+            return r;
+        }
+
+        r.authoritative = (aa == 1);
+
+        int p = 12;
+
+        // Skip Question section(s) (usually QD=1)
+        try {
+            for (int i = 0; i < qd; i++) {
+                NameDec qn = decodeName(resp, p);
+                p = qn.next + 4; // skip QTYPE (2) + QCLASS (2)
+            }
+        } catch (Exception e) {
+            r.error = "Malformed Question section: " + e.getMessage();
+            return r;
+        }
+
+        // Answer RRs
+        try {
+            for (int i = 0; i < an; i++) {
+                RRParse rr = parseRR(resp, p, r.authoritative);
+                p = rr.next;
+                if (rr.line != null) r.answers.add(rr.line);
+            }
+        } catch (Exception e) {
+            r.error = "Malformed Answer section: " + e.getMessage();
+            return r;
+        }
+
+        // Authority section (ns) — not required to print; skip over it correctly
+        try {
+            for (int i = 0; i < ns; i++) {
+                // Even if we don't print, we must advance p over NAME, TYPE, CLASS, TTL, RDLENGTH, RDATA
+                NameDec skipName = decodeName(resp, p);
+                int q = skipName.next;
+                int type = u16(resp, q); q += 2;
+                q += 2;            // class
+                q += 4;            // ttl
+                int rdlen = u16(resp, q); q += 2;
+                q += rdlen;        // rdata
+                p = q;
+            }
+        } catch (Exception e) {
+            r.error = "Malformed Authority section: " + e.getMessage();
+            return r;
+        }
+
+        // Additional RRs
+        try {
+            for (int i = 0; i < ar; i++) {
+                RRParse rr = parseRR(resp, p, r.authoritative);
+                p = rr.next;
+                if (rr.line != null) r.additionals.add(rr.line);
+            }
+        } catch (Exception e) {
+            r.error = "Malformed Additional section: " + e.getMessage();
+            return r;
+        }
+
+        r.answerCount = r.answers.size();
+        r.additionalCount = r.additionals.size();
+        r.ok = true;
+        if (r.answerCount == 0 && !r.notFound) {
+            // Some servers reply with no answers but rcode=0; spec wants NOTFOUND in this lab when nothing in Answers.
+            r.notFound = true;
+        }
+        return r;
     }
 }
