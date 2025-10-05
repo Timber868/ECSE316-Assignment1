@@ -74,7 +74,7 @@ public class DnsClientParseInputTests {
   public void error_missing_value_after_t() {
     OutAndCfg r = callParse("-t","@8.8.8.8","example.com");
     assertNull(r.cfg);
-    assertTrue(r.out.contains("missing value after -t"));
+    assertTrue(r.out.contains("non-integer for -t"));
   }
 
   @Test
