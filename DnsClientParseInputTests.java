@@ -88,11 +88,11 @@ public class DnsClientParseInputTests {
   public void error_missing_server_or_name() {
     OutAndCfg r1 = callParse("@8.8.8.8");
     assertNull(r1.cfg);
-    assertTrue(r1.out.contains("missing @server or name"));
+    assertTrue(r1.out.contains("missing @server and/or name"));
 
     OutAndCfg r2 = callParse("example.com");
     assertNull(r2.cfg);
-    assertTrue(r2.out.contains("missing @server or name"));
+    assertTrue(r2.out.contains("missing @server and/or name"));
   }
 
   @Test
