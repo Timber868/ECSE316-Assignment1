@@ -1,13 +1,13 @@
-# ECSE316-Assignment1
+# ECSE316 – Assignment 1
+## DnsClient
 
-# DnsClient
+A minimal DNS client implemented in **Java**.  
+Builds DNS queries manually (without any DNS libraries), sends them over **UDP**, and prints results in the exact format required by the assignment.
 
-M# DnsClient
-
-Minimal DNS client over UDP (Java). Builds DNS queries manually (no DNS libs), sends them to a DNS server, and prints results in the required format.
+---
 
 ## Build
-$ javac DnsClient.java
+javac DnsClient.java
 
 ## Usage
 $ java DnsClient [-t timeout] [-r max-retries] [-p port] [-mx|-ns] @server name
@@ -42,9 +42,4 @@ MX    <host>  <pref>   <ttl> <auth|nonauth>
 NS    <host>  <ttl>    <auth|nonauth>
 ***Additional Section (M records)***   # if present
 NOTFOUND                               # if no answers
-ERROR   <description>                  # on errors
-
-## Notes
-- Uses DatagramSocket with setSoTimeout + retry loop.
-- Uses InetAddress.getByAddress(byte[4]) for @server (no name lookups).
-- Supports A/MX/NS queries; prints A/CNAME/MX/NS; manual packet build/parse.
+ERROR	<description>                  # on errors (tab after ERROR)
