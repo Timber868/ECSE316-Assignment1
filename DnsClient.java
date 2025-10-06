@@ -298,7 +298,7 @@ class DnsClient {
     
         // Validate required parameters
         if (config.server == null || config.name == null) {
-            System.out.println("ERROR\tIncorrect input syntax: missing @server or name");
+            System.out.println("ERROR\tIncorrect input syntax: missing @server and/or name");
             return null;
         }
     

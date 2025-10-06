@@ -44,8 +44,8 @@ public class DnsClientIntegrationTests {
 
     @Test
     public void missing_server_or_name() throws Exception {
-        assertTrue(runClient("@8.8.8.8").out.contains("missing @server or name"));
-        assertTrue(runClient("example.com").out.contains("missing @server or name"));
+        assertTrue(runClient("@8.8.8.8").out.contains("missing @server and/or name"));
+        assertTrue(runClient("example.com").out.contains("missing @server and/or name"));
     }
 
     @Test
