@@ -4,7 +4,7 @@
 A minimal DNS client implemented in **Java**.  
 Builds DNS queries manually (without any DNS libraries), sends them over **UDP**, and prints results in the exact format required by the assignment.
 
----
+Our java version was 21.0.4.
 
 ## Build
 javac DnsClient.java
